@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  azure-eventhub-processor:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=local
+      - EVENTHUBS_NAMESPACE=your-namespace
+      - EVENT_HUB_NAME=events
+      - STORAGE_ACCOUNT=your-storage
+      - DB_HOST=postgresql
+      - DB_NAME=eventprocessor
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=password
+    depends_on:
+      - postgresql
+      - prometheus
+    volumes:
+      - ./config:/app/config
+    networks:
+      - event-processing
+
+  postgresql:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=eventprocessor
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - event-processing
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - event-processing
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - event-processing
+
+volumes:
+  postgres_data:
+  grafana_data:
+
+networks:
+  event-processing:
+    driver: bridge

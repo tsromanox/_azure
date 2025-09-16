@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: eventhub-processor
+  cloud:
+    azure:
+      eventhubs:
+        namespace: ${EVENTHUBS_NAMESPACE:}
+        processor:
+          checkpoint-store:
+            container-name: ${CHECKPOINT_CONTAINER:eh-checkpoints}
+      credential:
+        managed-identity-enabled: true
+    stream:
+      function:
+        definition: process
+      bindings:
+        process-in-0:
+          destination: ${INPUT_HUB:topic-a}
+          group: ${CONSUMER_GROUP:$Default}
+        process-out-0:
+          destination: ${OUTPUT_HUB:topic-b}
+      azure:
+        bindings:
+          process-in-0:
+            consumer:
+              checkpoint:
+                mode: MANUAL
+        eventhubs:
+          bindings:
+            process-in-0:
+              consumer:
+                event-hubs-namespace: ${EVENTHUBS_NAMESPACE:}
+            process-out-0:
+              producer:
+                event-hubs-namespace: ${EVENTHUBS_NAMESPACE:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    root: info
+    com.openfinance: debug
+
+---
+spring:
+  config:
+    activate:
+      on-profile: imperative
+
+eventhubs:
+  namespace-fqdn: ${EVENTHUBS_FQDN:}
+  input-hub: ${INPUT_HUB:topic-a}
+  output-hub: ${OUTPUT_HUB:topic-b}
+  dlq-hub: ${DLQ_HUB:dlq}
+  checkpoint:
+    connection-string: ${CHECKPOINT_CONNECTION_STRING:}
+    container: ${CHECKPOINT_CONTAINER:eh-checkpoints}

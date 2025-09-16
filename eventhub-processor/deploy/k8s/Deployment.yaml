@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eh-consumer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: eh-consumer
+  template:
+    metadata:
+      labels:
+        app: eh-consumer
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/placeholder/eventhub-processor:latest
+          env:
+            - name: EVENTHUBS_NAMESPACE
+              valueFrom:
+                secretKeyRef:
+                  name: eh-secrets
+                  key: namespace
+            - name: EVENTHUBS_FQDN
+              valueFrom:
+                secretKeyRef:
+                  name: eh-secrets
+                  key: fqdn
+            - name: CHECKPOINT_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: eh-secrets
+                  key: checkpoint-conn
+            - name: CHECKPOINT_CONTAINER
+              value: eh-checkpoints
+          ports:
+            - containerPort: 8080

@@ -1,0 +1,156 @@
+spring:
+  application:
+    name: azure-eventhub-processor
+
+  # Virtual Threads (Spring Boot 3.5+)
+  threads:
+    virtual:
+      enabled: true
+
+  # Task Execution for High Performance
+  task:
+    execution:
+      mode: force
+      pool:
+        core-size: 8
+        max-size: 16
+        queue-capacity: 200
+        keep-alive: 60s
+        thread-name-prefix: "event-processor-"
+
+  # Azure Event Hub Configuration
+  cloud:
+    azure:
+      eventhubs:
+        namespace: ${EVENTHUBS_NAMESPACE}
+        event-hub-name: ${EVENT_HUB_NAME}
+        consumer-group: ${CONSUMER_GROUP:$Default}
+        processor:
+          checkpoint-store:
+            account-name: ${STORAGE_ACCOUNT}
+            container-name: ${STORAGE_CONTAINER}
+            create-container-if-not-exists: true
+          batch-size: 64
+          max-wait-time: PT5S
+          prefetch-count: 1000
+          load-balancing:
+            update-interval: PT10S
+            partition-ownership-expiration: PT30S
+
+      credentials:
+        managed-identity-enabled: true
+
+      retry:
+        exponential:
+          max-retries: 3
+          base-delay: PT2S
+          max-delay: PT1M
+
+  # Database Configuration
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:eventprocessor}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 10
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        use_sql_comments: false
+
+# Processing Configuration
+event:
+  processing:
+    mode: ${PROCESSING_MODE:streaming} # streaming, batch
+    delivery-guarantee: ${DELIVERY_GUARANTEE:at-least-once} # at-least-once, exactly-once
+    data-format: ${DATA_FORMAT:json} # json, avro, protobuf
+    max-retry-attempts: 3
+    dead-letter-enabled: true
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      external-api:
+        register-health-indicator: true
+        sliding-window-size: 100
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        minimum-number-of-calls: 5
+        event-consumer-buffer-size: 10
+      database:
+        sliding-window-size: 50
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 30s
+
+  retry:
+    instances:
+      external-api:
+        max-attempts: 3
+        wait-duration: 1s
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - java.net.ConnectException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.client.HttpServerErrorException
+        ignore-exceptions:
+          - java.lang.IllegalArgumentException
+
+# Monitoring Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers,retries
+  endpoint:
+    health:
+      show-details: always
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+
+  health:
+    azure-eventhubs:
+      enabled: true
+    circuitbreakers:
+      enabled: true
+
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    ssl:
+      enabled: true
+
+  observations:
+    annotations:
+      enabled: true
+
+  tracing:
+    opentelemetry:
+      export:
+        enabled: true
+
+# Logging Configuration
+logging:
+  level:
+    com.azure: INFO
+    org.springframework.cloud.azure: INFO
+    com.yourcompany.eventprocessor: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level [%X{traceId},%X{spanId}] %logger{36} - %msg%n"

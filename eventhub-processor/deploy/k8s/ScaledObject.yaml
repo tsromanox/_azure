@@ -1,0 +1,19 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: eh-consumer-scaler
+spec:
+  scaleTargetRef:
+    name: eh-consumer
+  minReplicaCount: 2
+  maxReplicaCount: 50
+  cooldownPeriod: 120
+  triggers:
+    - type: azure-eventhub
+      metadata:
+        connectionFromEnv: EVENTHUBS_CONNECTION
+        storageConnectionFromEnv: CHECKPOINT_CONNECTION
+        eventHubName: topic-a
+        consumerGroup: cg-processing
+        unprocessedEventThreshold: "1000"
+        activationUnprocessedEventThreshold: "100"
