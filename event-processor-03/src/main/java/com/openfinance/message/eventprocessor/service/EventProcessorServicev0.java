@@ -2,13 +2,11 @@ package com.openfinance.message.eventprocessor.service;
 
 import com.azure.messaging.eventhubs.*;
 import com.azure.messaging.eventhubs.EventData;
-import com.azure.messaging.eventhubs.checkpointstore.blob.BlobCheckpointStore;
 import com.azure.messaging.eventhubs.models.*;
 import com.azure.messaging.eventhubs.models.ErrorContext;
 import com.azure.messaging.eventhubs.models.PartitionContext;
 import com.azure.spring.messaging.eventhubs.core.EventHubsProcessorFactory;
 import com.azure.spring.messaging.eventhubs.core.checkpoint.CheckpointConfig;
-import com.azure.spring.messaging.eventhubs.core.checkpoint.CheckpointMode;
 import com.azure.spring.messaging.eventhubs.core.properties.EventHubsContainerProperties;
 import com.openfinance.message.eventprocessor.config.EventProcessingProperties;
 import com.openfinance.message.eventprocessor.model.*;
@@ -27,7 +25,6 @@ import org.springframework.stereotype.Service;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -40,7 +37,7 @@ import java.util.function.Consumer;
 
 @Service
 @Slf4j
-public class EventProcessorService {
+public class EventProcessorServicev0 {
 
     private final EventProcessingProperties properties;
     private final EventDeserializer eventDeserializer;
@@ -69,7 +66,7 @@ public class EventProcessorService {
     private static final long CHECKPOINT_INTERVAL_MS = 30000; // 30 seconds
 
     @Autowired
-    public EventProcessorService(
+    public EventProcessorServicev0(
             EventProcessingProperties properties,
             EventDeserializer eventDeserializer,
             EventProcessingOrchestrator orchestrator,
@@ -123,9 +120,9 @@ public class EventProcessorService {
         // Configure checkpoint
         CheckpointConfig checkpointConfig = new CheckpointConfig();
         if (properties.getDeliveryGuarantee() == DeliveryGuarantee.EXACTLY_ONCE) {
-            checkpointConfig.setMode(CheckpointMode.RECORD);
+            checkpointConfig.setMode(CheckpointConfig.CheckpointMode.RECORD);
         } else {
-            checkpointConfig.setMode(CheckpointMode.BATCH);
+            checkpointConfig.setMode(CheckpointConfig.CheckpointMode.BATCH);
             checkpointConfig.setInterval(Duration.ofSeconds(30));
             checkpointConfig.setCount(properties.getCheckpointBatchSize());
         }
@@ -142,7 +139,7 @@ public class EventProcessorService {
 
     private EventProcessorClient createEventProcessor() {
         // Create the event processor with proper configuration
-        return processorFactory.createProcessor(
+        return processorFactory.createEventProcessorClient(
                 properties.getEventHubName(),
                 properties.getConsumerGroup(),
                 createEventConsumer(),
@@ -176,72 +173,15 @@ public class EventProcessorService {
 
             // Handle different types of errors
             Throwable throwable = errorContext.getThrowable();
-
-            // Check if it's a transient error that should be retried
-            if (isTransientError(throwable)) {
-                log.info("Transient error occurred, will retry: {}", throwable.getMessage());
-            } else if (isAuthenticationError(throwable)) {
-                log.error("Authentication error occurred: {}", throwable.getMessage());
-                // Could trigger re-authentication or alert
-            } else if (isQuotaExceededError(throwable)) {
-                log.error("Quota exceeded error: {}", throwable.getMessage());
-                // Could implement backoff strategy
-            } else {
-                log.error("Non-transient error occurred: {}", throwable.getMessage());
+            if (throwable instanceof EventHubException) {
+                EventHubException ehException = (EventHubException) throwable;
+                if (ehException.isTransient()) {
+                    log.info("Transient error occurred, will retry: {}", ehException.getMessage());
+                } else {
+                    log.error("Non-transient EventHub error occurred: {}", ehException.getMessage());
+                }
             }
-
-            // Update failed events counter
-            failedEvents.incrementAndGet();
         };
-    }
-
-    private boolean isTransientError(Throwable throwable) {
-        if (throwable == null) return false;
-
-        String message = throwable.getMessage();
-        String className = throwable.getClass().getName();
-
-        // Common transient error patterns
-        return className.contains("TimeoutException") ||
-                className.contains("IOException") ||
-                className.contains("ConnectException") ||
-                (message != null && (
-                        message.contains("temporarily unavailable") ||
-                                message.contains("retry") ||
-                                message.contains("timeout") ||
-                                message.contains("Service Unavailable")
-                ));
-    }
-
-    private boolean isAuthenticationError(Throwable throwable) {
-        if (throwable == null) return false;
-
-        String message = throwable.getMessage();
-        String className = throwable.getClass().getName();
-
-        return className.contains("UnauthorizedException") ||
-                className.contains("AuthenticationException") ||
-                (message != null && (
-                        message.contains("401") ||
-                                message.contains("403") ||
-                                message.contains("Unauthorized") ||
-                                message.contains("Forbidden") ||
-                                message.contains("authentication") ||
-                                message.contains("authorization")
-                ));
-    }
-
-    private boolean isQuotaExceededError(Throwable throwable) {
-        if (throwable == null) return false;
-
-        String message = throwable.getMessage();
-
-        return message != null && (
-                message.contains("quota") ||
-                        message.contains("throttled") ||
-                        message.contains("rate limit") ||
-                        message.contains("429")
-        );
     }
 
     @Timed(value = "event.processing.duration", description = "Time taken to process an event")
@@ -388,7 +328,7 @@ public class EventProcessorService {
         systemProperties.put("partitionKey", azureEventData.getPartitionKey());
 
         return com.openfinance.message.eventprocessor.model.EventData.builder()
-                .body(azureEventData.getBodyAsBinaryData().toBytes())
+                .body(azureEventData.getBodyAsBytes())
                 .properties(properties)
                 .systemProperties(systemProperties)
                 .offset(azureEventData.getOffset())
@@ -462,8 +402,8 @@ public class EventProcessorService {
         partitionContexts.forEach((partitionId, context) -> {
             metrics.put(partitionId, new PartitionMetrics(
                     context.getPartitionId(),
-                    context.getConsumerGroup(),
-                    context.getEventHubName()
+                    context.getOffset(),
+                    context.getSequenceNumber()
             ));
         });
         return metrics;

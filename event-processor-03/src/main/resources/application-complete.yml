@@ -1,0 +1,298 @@
+spring:
+  application:
+    name: azure-eventhub-processor
+
+  # Spring Cloud Azure Configuration
+  cloud:
+    azure:
+      # Global Azure configuration
+      credential:
+        managed-identity-enabled: ${AZURE_MANAGED_IDENTITY:false}
+        client-id: ${AZURE_CLIENT_ID:}
+        client-secret: ${AZURE_CLIENT_SECRET:}
+        tenant-id: ${AZURE_TENANT_ID:}
+
+      # Event Hubs specific configuration
+      eventhubs:
+        enabled: true
+        namespace: ${AZURE_EVENTHUB_NAMESPACE}
+        connection-string: ${AZURE_EVENTHUB_CONNECTION_STRING:}
+
+        # Producer configuration (if needed)
+        producer:
+          send-timeout: PT10S
+
+        # Processor configuration
+        processor:
+          consumer-group: ${CONSUMER_GROUP:$Default}
+          prefetch-count: ${PREFETCH_COUNT:500}
+
+          # Checkpoint store configuration
+          checkpoint-store:
+            create-container-if-not-exists: true
+            account-name: ${STORAGE_ACCOUNT_NAME}
+            account-key: ${STORAGE_ACCOUNT_KEY:}
+            container-name: ${CHECKPOINT_CONTAINER:eventhub-checkpoints}
+
+          # Initial position
+          initial-partition-event-position:
+            offset: latest
+            inclusive: false
+
+          # Load balancing
+          load-balancing:
+            update-interval: PT10S
+            partition-ownership-expiration-interval: PT30S
+            strategy: GREEDY
+
+      # Storage configuration (for checkpoint store)
+      storage:
+        blob:
+          account-name: ${STORAGE_ACCOUNT_NAME}
+          account-key: ${STORAGE_ACCOUNT_KEY:}
+          connection-string: ${AZURE_STORAGE_CONNECTION_STRING:}
+          endpoint: https://${STORAGE_ACCOUNT_NAME}.blob.core.windows.net
+
+  # Virtual Threads (Spring Boot 3.2+)
+  threads:
+    virtual:
+      enabled: true
+
+  # Task execution configuration
+  task:
+    execution:
+      pool:
+        core-size: 8
+        max-size: 16
+        queue-capacity: 1000
+        keep-alive: PT60S
+        thread-name-prefix: "event-processor-"
+
+# Custom Event Processing Configuration
+event:
+  processing:
+    # Core settings
+    event-hub-name: ${EVENT_HUB_NAME:events}
+    consumer-group: ${CONSUMER_GROUP:$Default}
+    mode: ${PROCESSING_MODE:streaming} # streaming or batch
+    delivery-guarantee: ${DELIVERY_GUARANTEE:at-least-once} # at-least-once or exactly-once
+    data-format: ${DATA_FORMAT:json} # json, avro, or protobuf
+
+    # Processing behavior
+    max-retry-attempts: ${MAX_RETRY_ATTEMPTS:3}
+    dead-letter-enabled: ${DLQ_ENABLED:true}
+    checkpoint-batch-size: ${CHECKPOINT_BATCH_SIZE:100}
+
+    # Performance tuning
+    batch-size: ${BATCH_SIZE:64}
+    prefetch-count: ${PREFETCH_COUNT:500}
+    max-wait-time-seconds: ${MAX_WAIT_TIME:5}
+    processing-threads: ${PROCESSING_THREADS:16}
+    queue-capacity: ${QUEUE_CAPACITY:1000}
+
+# Database Configuration
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:eventprocessor}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:password}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      minimum-idle: ${DB_MIN_IDLE:10}
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+
+  jpa:
+    hibernate:
+      ddl-auto: ${DDL_AUTO:validate}
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+# Resilience4j Circuit Breaker Configuration
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        register-health-indicator: true
+        sliding-window-size: 100
+        minimum-number-of-calls: 10
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        wait-duration-in-open-state: PT30S
+        failure-rate-threshold: 50
+        event-consumer-buffer-size: 10
+    instances:
+      external-api:
+        base-config: default
+        wait-duration-in-open-state: PT10S
+      database:
+        base-config: default
+        sliding-window-size: 50
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: PT30S
+
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: PT1S
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+    instances:
+      external-api:
+        base-config: default
+        retry-exceptions:
+          - java.net.ConnectException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.client.HttpServerErrorException
+        ignore-exceptions:
+          - java.lang.IllegalArgumentException
+
+# Monitoring & Metrics
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers,retries,env,configprops
+      base-path: /actuator
+
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+    circuitbreakers:
+      enabled: true
+    azure:
+      enabled: true
+
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+        step: PT30S
+    tags:
+      application: ${spring.application.name}
+      environment: ${ENVIRONMENT:development}
+      region: ${AZURE_REGION:eastus}
+    distribution:
+      percentiles:
+        event.processing.duration: 0.5, 0.95, 0.99
+      percentiles-histogram:
+        event.processing.duration: true
+
+  tracing:
+    sampling:
+      probability: ${TRACING_PROBABILITY:0.1}
+
+# Logging Configuration
+logging:
+  level:
+    root: ${LOG_LEVEL_ROOT:INFO}
+    com.yourcompany: ${LOG_LEVEL_APP:DEBUG}
+    com.azure: ${LOG_LEVEL_AZURE:INFO}
+    org.springframework.cloud.azure: ${LOG_LEVEL_SPRING_AZURE:INFO}
+    org.hibernate: ${LOG_LEVEL_HIBERNATE:WARN}
+    io.github.resilience4j: ${LOG_LEVEL_RESILIENCE:INFO}
+
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(${LOG_LEVEL_PATTERN:-%5p}) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr([%X{traceId},%X{spanId}]){yellow} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} ${LOG_LEVEL_PATTERN:-%5p} ${PID:- } --- [%t] [%X{traceId},%X{spanId}] %-40.40logger{39} : %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}"
+
+  file:
+    name: ${LOG_FILE:logs/application.log}
+    max-size: ${LOG_FILE_MAX_SIZE:10MB}
+    max-history: ${LOG_FILE_MAX_HISTORY:30}
+
+# Server Configuration
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  compression:
+    enabled: true
+  undertow:
+    threads:
+      io: ${IO_THREADS:8}
+      worker: ${WORKER_THREADS:64}
+    buffer-size: 1024
+    direct-buffers: true
+
+---
+# Profile: Production
+spring:
+  config:
+    activate:
+      on-profile: production
+
+# Production-specific overrides
+event:
+  processing:
+    mode: batch
+    delivery-guarantee: exactly-once
+    checkpoint-batch-size: 50
+    batch-size: 128
+    prefetch-count: 1000
+    processing-threads: 32
+
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 20
+
+logging:
+  level:
+    root: WARN
+    com.yourcompany: INFO
+
+management:
+  metrics:
+    export:
+      prometheus:
+        step: PT60S
+
+---
+# Profile: Development
+spring:
+  config:
+    activate:
+      on-profile: development
+
+# Development-specific overrides
+event:
+  processing:
+    mode: streaming
+    delivery-guarantee: at-least-once
+    checkpoint-batch-size: 10
+    batch-size: 32
+    processing-threads: 4
+
+spring:
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: update
+
+logging:
+  level:
+    root: INFO
+    com.yourcompany: DEBUG
+    org.springframework.cloud.azure: DEBUG
